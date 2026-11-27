@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, inspect, text
+from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Float, Boolean, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 from core.config import DATABASE_URL, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
@@ -8,14 +8,14 @@ engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# In-memory cache for chat/user settings to avoid repeated SQLite queries
+# In-memory cache for chat/user settings to avoid repeated DB queries
 _user_cache: dict[int, dict] = {}
 
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
 
-    user_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, primary_key=True, index=True)
     language = Column(String, default=DEFAULT_LANGUAGE, nullable=False)
     currency = Column(String, default="usdt", nullable=False)
     pushover_key = Column(String, nullable=True)
@@ -27,8 +27,8 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id = Column(String(8), primary_key=True)
-    user_id = Column(Integer, index=True, nullable=False)
-    chat_id = Column(Integer, nullable=False)
+    user_id = Column(BigInteger, index=True, nullable=False)
+    chat_id = Column(BigInteger, nullable=False)
     thread_id = Column(Integer, nullable=True)
     symbol = Column(String(20), nullable=False)
     symbol_binance = Column(String(30), nullable=False)
@@ -40,8 +40,10 @@ class Alert(Base):
 
 
 def _ensure_schema():
-    """Applies non-destructive column additions if an older SQLite database is detected."""
+    """Applies non-destructive column additions if an older database schema is detected."""
     inspector = inspect(engine)
+    bool_default = "FALSE" if engine.dialect.name == "postgresql" else "0"
+
     expected_columns = {
         "user_settings": {
             "language": f"VARCHAR DEFAULT '{DEFAULT_LANGUAGE}'",
@@ -52,7 +54,7 @@ def _ensure_schema():
         },
         "alerts": {
             "thread_id": "INTEGER",
-            "repeat": "BOOLEAN DEFAULT 0",
+            "repeat": f"BOOLEAN DEFAULT {bool_default}",
             "interval": "INTEGER DEFAULT 5",
             "last_triggered": "FLOAT DEFAULT 0.0",
         },

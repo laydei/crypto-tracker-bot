@@ -18,6 +18,7 @@ from core.context import AppContext
 import core.database as db
 import core.language as lang
 from core.permissions import is_group_chat
+from services.api_helpers import find_binance_symbol
 
 router = Router()
 
@@ -605,6 +606,7 @@ async def check_alerts_task(bot: Bot, ctx: AppContext):
                 push_key = user["pushover_key"]
                 user_sound = user["pushover_sound"]
 
+                tg_ok = None
                 if method in ["tg", "both"]:
                     msg = lang.get_text(
                         user_id,
@@ -623,7 +625,7 @@ async def check_alerts_task(bot: Bot, ctx: AppContext):
                         kb.button(text=btn_text, callback_data=f"confirmdel_{alert_id}_notif")
                         reply_markup = kb.as_markup()
 
-                    await _send_telegram_alert(
+                    tg_ok = await _send_telegram_alert(
                         bot=bot,
                         chat_id=chat_id,
                         thread_id=thread_id,
@@ -647,6 +649,9 @@ async def check_alerts_task(bot: Bot, ctx: AppContext):
                     _background_tasks.add(task)
                     task.add_done_callback(_background_tasks.discard)
 
+                if method == "tg" and not tg_ok:
+                    continue
+
                 if not alert["repeat"]:
                     db.remove_alert(user_id, alert_id)
                 else:
@@ -659,4 +664,4 @@ async def check_alerts_task(bot: Bot, ctx: AppContext):
         except Exception:
             logging.exception(f"Unexpected error in check_alerts_task (retrying in {error_backoff}s):")
             await asyncio.sleep(error_backoff)
-            error_backoff = min(error_backoff * 2, 60)
+            error_backoff = min(error_backoff * 2, 60)  

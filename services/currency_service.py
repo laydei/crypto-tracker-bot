@@ -1,8 +1,9 @@
+import asyncio
 import logging
 import aiohttp
 
 import core.database as db
-from core.redis_client import cache
+from core.redis_client import safe_get, safe_setex
 
 FIAT_CURRENCIES = [
     "USDT", "USD", "EUR", "UAH",
@@ -73,14 +74,11 @@ async def get_single_rate_and_symbol(
 
     cache_key = f"rate:{code}"
 
-    try:
-        cached_val = await cache.get(cache_key)
-        if cached_val == "ERROR":
-            return None, symbol
-        if cached_val is not None:
-            return float(cached_val), symbol
-    except Exception as e:
-        logging.error(f"Redis get error for rate {code}: {e}")
+    cached_val = await safe_get(cache_key)
+    if cached_val == "ERROR":
+        return None, symbol
+    if cached_val is not None:
+        return float(cached_val), symbol
 
     url = f"https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies={code}"
 
@@ -90,20 +88,12 @@ async def get_single_rate_and_symbol(
             data = await resp.json()
             rate = float(data["tether"][code])
 
-        try:
-            await cache.setex(cache_key, 300, str(rate))
-        except Exception as e:
-            logging.error(f"Redis set error for rate {code}: {e}")
-
+        await safe_setex(cache_key, 300, str(rate))
         return rate, symbol
 
     except Exception as e:
         logging.warning(f"Failed to fetch rate for {code}, caching negative result: {e}")
-        try:
-            await cache.setex(cache_key, 60, "ERROR")
-        except Exception as redis_err:
-            logging.error(f"Redis negative cache error for {code}: {redis_err}")
-
+        await safe_setex(cache_key, 60, "ERROR")
         return None, symbol
 
 
@@ -125,10 +115,12 @@ async def calculate_user_prices(
 ) -> list[tuple[str, str]]:
     """Returns a list of (formatted_price, symbol) tuples for all user-selected currencies."""
     selected = get_user_currencies(user_id)
-    results = []
+    pairs = await asyncio.gather(
+        *(get_single_rate_and_symbol(code, http_session=http_session) for code in selected)
+    )
 
-    for code in selected:
-        rate, sym = await get_single_rate_and_symbol(code, http_session=http_session)
+    results = []
+    for rate, sym in pairs:
         if rate is None:
             continue
         final_val = raw_usdt_price * multiplier * rate

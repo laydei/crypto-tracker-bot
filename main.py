@@ -55,8 +55,6 @@ async def start_bot():
     dp.include_router(currencies.router)
     dp.include_router(price.router)
 
-    await set_commands(bot)
-
     ssl_context = ssl.create_default_context(cafile=certifi.where())
     timeout = aiohttp.ClientTimeout(total=10)
     connector = aiohttp.TCPConnector(ssl=ssl_context)
@@ -70,6 +68,7 @@ async def start_bot():
     markets_task = None
 
     try:
+        await set_commands(bot)
         await exchange.load_markets()
         ctx.markets.update(exchange.markets)
         logging.info(f"Market data loaded from Binance ({len(ctx.markets)} symbols).")

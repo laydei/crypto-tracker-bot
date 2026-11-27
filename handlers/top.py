@@ -1,3 +1,4 @@
+import html
 import json
 import logging
 
@@ -7,7 +8,7 @@ from aiogram.types import Message
 
 from core.context import AppContext
 import core.language as lang
-from core.redis_client import cache
+from core.redis_client import safe_get, safe_setex
 from services import currency_service as cur_srv
 
 router = Router()
@@ -21,12 +22,9 @@ MIN_QUOTE_VOLUME_USDT = 1_000_000.0  # Filter out illiquid micro-cap pairs (< $1
 
 async def _get_cached_spot_tickers(ctx: AppContext) -> list[dict]:
     """Fetches liquid USDT spot tickers using a 20-second Redis cache."""
-    try:
-        cached = await cache.get(TOP_CACHE_KEY)
-        if cached:
-            return json.loads(cached)
-    except Exception as e:
-        logging.error(f"Redis get error in top.py: {e}")
+    cached = await safe_get(TOP_CACHE_KEY)
+    if cached:
+        return json.loads(cached)
 
     all_tickers = await ctx.exchange.fetch_tickers()
     valid_tickers = []
@@ -52,10 +50,7 @@ async def _get_cached_spot_tickers(ctx: AppContext) -> list[dict]:
         })
 
     if valid_tickers:
-        try:
-            await cache.setex(TOP_CACHE_KEY, TOP_CACHE_TTL, json.dumps(valid_tickers))
-        except Exception as e:
-            logging.error(f"Redis set error in top.py: {e}")
+        await safe_setex(TOP_CACHE_KEY, TOP_CACHE_TTL, json.dumps(valid_tickers))
 
     return valid_tickers
 
@@ -112,9 +107,10 @@ async def generate_top_message(args: str, user_id: int, ctx: AppContext) -> str:
             price_str = cur_srv.format_price(converted_current)
             old_price_str = cur_srv.format_price(converted_old)
             pct_str = f"+{pct_float:.2f}%" if pct_float > 0 else f"{pct_float:.2f}%"
+            safe_symbol = html.escape(t["symbol"])
 
             msg_lines.append(
-                f"<b>{i}. {t['symbol']}</b>: {price_str} (<s>{old_price_str}</s>) {sym} | {pct_str}"
+                f"<b>{i}. {safe_symbol}</b>: {price_str} (<s>{old_price_str}</s>) {sym} | {pct_str}"
             )
 
         return "\n".join(msg_lines)

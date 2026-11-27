@@ -2,6 +2,7 @@ import asyncio
 import html
 import io
 import logging
+import re
 import threading
 from contextlib import suppress
 
@@ -135,15 +136,20 @@ async def chart(message: Message, command: CommandObject, ctx: AppContext):
         await message.reply(lang.get_text(scope_id, "chart_usage"))
         return
 
-    status_msg = await message.answer(lang.get_text(scope_id, "chart_generating"))
-
     raw_query = command.args.strip()
-    coin_data = await search_coingecko(raw_query, ctx.http_session)
-    token_name = coin_data["name"] if coin_data else raw_query.upper()
-
     query_graph = raw_query.upper()
     if "/" not in query_graph:
         query_graph = f"{query_graph}/USDT"
+
+    # Validate format and length before rendering so ChartCallback.pack() stays within Telegram's 64-byte limit
+    if not re.fullmatch(r"[A-Z0-9]{1,15}/[A-Z0-9]{1,10}", query_graph):
+        await message.reply(lang.get_text(scope_id, "chart_error"))
+        return
+
+    status_msg = await message.answer(lang.get_text(scope_id, "chart_generating"))
+
+    coin_data = await search_coingecko(raw_query, ctx.http_session)
+    token_name = coin_data["name"] if coin_data else raw_query.upper()
 
     safe_token_name = html.escape(token_name)
     safe_query_graph = html.escape(query_graph)

@@ -1,4 +1,5 @@
 from contextlib import suppress
+import html
 
 from aiogram import Router, F, Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -76,9 +77,9 @@ async def handle_start_command(message: Message, bot: Bot):
         user_lang = db.get_user(scope_id).get("language", "en")
         with suppress(TelegramBadRequest):
             await set_user_commands(bot, scope_id, user_lang)
-        display_name = message.from_user.first_name
+        display_name = html.escape(message.from_user.first_name or "User")
     else:
-        display_name = message.chat.title or "Group"
+        display_name = html.escape(message.chat.title or "Group")
 
     text = lang.get_text(scope_id, "start_greeting", name=display_name)
     keyboard = build_start_keyboard(scope_id)
