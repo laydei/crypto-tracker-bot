@@ -11,10 +11,10 @@ Telegram bot for real-time cryptocurrency price tracking, multi-currency convers
 
 ## Features
 
-- **Live Prices & Multi-Currency Conversion:** Instant spot prices from Binance converted into up to 6 simultaneous fiat/crypto currencies (`USDT`, `USD`, `EUR`, `UAH`, `BTC`, `ETH`, etc.) via CoinGecko rates cached in Redis.
+- **Live Prices & Multi-Currency Conversion:** Instant spot prices from Binance converted into up to 6 simultaneous fiat/crypto currencies (`USDT`, `USD`, `EUR`, `UAH`, `BTC`, `ETH`, etc.) fetched concurrently via CoinGecko with Redis caching.
 - **Interactive Candlestick Charts:** Timeframe switching (`1d`, `5d`, `1mo`, `6mo`) and volume overlay toggles rendered off the event loop in worker threads.
 - **Market Analytics:** Top liquid gainers/losers (`/top`) and perpetual futures funding rates (`/funding`).
-- **Price Alerts & Pushover:** One-time or repeating price alerts with mobile push notifications via Pushover (private chats only).
+- **Price Alerts & Pushover:** One-time or repeating price alerts with mobile push notifications via Pushover (private chats only) and delivery-failure retry safety.
 - **Built-in Safe Calculator:** AST-based math evaluator via `/cal` (and inline in private chats).
 - **Group Chat Mode:** Per-group language and display currency settings restricted to group administrators; slash command pop-up menu stays hidden in groups to prevent chat clutter.
 - **Multilingual UI:** English (`en`), Ukrainian (`uk`), and Russian (`ru`).
@@ -50,12 +50,14 @@ bot_tg/
 ├── requirements.in          # Direct project dependencies
 ├── requirements.txt         # Compiled lockfile with pinned transitive dependencies
 ├── requirements-dev.in      # Development & testing dependencies
+├── Dockerfile               # Non-root production container image
+├── docker-compose.yml       # Bot + Redis stack with persistent named volume
 ├── pytest.ini               # Pytest configuration
 ├── core/
 │   ├── config.py            # Environment variables, BASE_DIR, DB/Redis URLs
 │   ├── context.py           # Shared ccxt exchange, markets dict, and aiohttp session
 │   ├── database.py          # SQLAlchemy models (UserSettings, Alert) & schema checks
-│   ├── redis_client.py      # Async Redis client for rate & ticker caching
+│   ├── redis_client.py      # Async Redis client with 30s circuit breaker fallback
 │   ├── permissions.py       # Group admin verification (with Redis cache & anon admins)
 │   ├── middlewares.py       # Per-user & per-group throttling + auto language detection
 │   ├── commands.py          # Scoped slash commands (enabled in private, hidden in groups)
@@ -63,18 +65,18 @@ bot_tg/
 ├── handlers/                # Aiogram routers (start, price, charts, top, funding, alerts, currencies)
 ├── services/
 │   ├── api_helpers.py       # Binance market lookup, CoinGecko search, periodic market refresh
-│   ├── currency_service.py  # Multi-currency conversion with positive/negative Redis caching
+│   ├── currency_service.py  # Concurrent multi-currency conversion with positive/negative Redis caching
 │   ├── calculator.py        # Safe AST arithmetic parser
 │   └── mplfinance_style.py  # Custom dark theme for candlestick charts
-└── tests/                   # Pytest unit tests (settings, database, calculator, alerts)
+└── tests/                   # Pytest unit tests (settings, i18n, calculator, cache/Redis, alerts)
 Architectural Notes & Limitations
 Single-Instance Polling: Designed to run as a single process (dp.start_polling). Running multiple instances concurrently against the same SQLite database and Telegram token will cause Conflict: terminated by other getUpdates request and duplicate alert checks.
 
 In-Memory State: Active Binance market metadata (ctx.markets), user settings cache, and throttling timestamps are stored in process memory and refreshed hourly or on restart.
 
-SQLite Concurrency: Default storage uses local SQLite (bot_database.db), which is suitable for personal and small-to-medium group workloads. For heavy multi-group deployments, switch DATABASE_URL to PostgreSQL.
+Database Storage: Uses local SQLite (bot_database.db) via SQLAlchemy with BigInteger Telegram IDs so schema migration to PostgreSQL (with psycopg/asyncpg) is straightforward if multi-group scale requires it.
 
-Redis Dependency: A running Redis server is required for exchange rate caching, /top ticker caching, and group admin permission caching.
+Graceful Redis Degradation: Redis is used to cache CoinGecko exchange rates, /top ticker snapshots, and group admin permissions. If Redis is unreachable, safe_get/safe_setex open a 30-second circuit breaker and bypass cache calls immediately without blocking bot responses.
 
 API Keys Setup
 1. Telegram Bot Token
@@ -94,106 +96,79 @@ Enter a name (e.g. Crypto Bot), accept the terms, and click Create Application.
 Copy the generated API Token/Key.
 
 Setup & Running
-Clone the repository and create a virtual environment:
+Option A: Local Run
+Create a virtual environment and install dependencies:
 
 Bash
 python3 -m venv .venv
-source .venv/bin/activate
-Install dependencies:
-
-Bash
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-Create and configure the .env file:
-Copy the template file in the project root (bot_tg/):
+Configure .env:
 
 Bash
 cp .env.example .env
-Open the created .env file in any text editor and paste your keys:
+Edit .env and set your keys:
 
 Фрагмент коду
 TELEGRAM_BOT_TOKEN="your_botfather_token"
 PUSHOVER_APP_TOKEN="your_pushover_token"
 REDIS_URL="redis://localhost:6379/0"
-TELEGRAM_BOT_TOKEN — required, token from @BotFather.
-
-PUSHOVER_APP_TOKEN — optional, application token from pushover.net (needed only if you use mobile push alerts).
-
-REDIS_URL — optional, defaults to redis://localhost:6379/0.
-
-Run the bot:
+Run the bot & tests:
 
 Bash
 python3 main.py
-Run unit tests:
 
-Bash
+# Run test suite (works without .env)
 pip install -r requirements-dev.in
-pytest
+pytest -v
+Option B: Docker Compose (Bot + Redis)
+Bash
+cp .env.example .env
+# Fill TELEGRAM_BOT_TOKEN in .env
+docker compose up -d --build
 🇺🇦 Українська (Швидкий старт)
 Отримання токенів:
 
-Telegram Bot Token: відкрий @BotFather у Telegram, надішли /newbot, вкажи ім'я та юзернейм (має закінчуватися на bot) і скопіюй отриманий токен.
+Telegram Bot Token: відкрий @BotFather у Telegram, надішли /newbot, вкажи ім'я та юзернейм (має закінчуватися на bot) і скопіюй токен.
 
 Pushover App Token (за бажанням): зареєструйся на pushover.net, у розділі Your Applications натисни Create an Application/API Token і скопіюй ключ.
 
-Створення віртуального середовища та встановлення залежностей:
+Локальний запуск:
 
 Bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-Налаштування файлу .env:
-У кореневій папці проєкту (bot_tg/) скопіюй шаблон .env.example у файл .env:
+cp .env.example .env
+# Встав свої токени у .env
+python3 main.py
+(Якщо Redis не запущений локально, бот продовжить працювати завдяки 30-секундному circuit breaker).
+
+Запуск через Docker Compose (бот + Redis):
 
 Bash
 cp .env.example .env
-Відкрий файл .env у будь-якому текстовому редакторі та встав туди свої ключі:
-
-Фрагмент коду
-TELEGRAM_BOT_TOKEN="твій_токен_від_botfather"
-PUSHOVER_APP_TOKEN="твій_токен_від_pushover"
-REDIS_URL="redis://localhost:6379/0"
-TELEGRAM_BOT_TOKEN — обов'язково, без нього бот не запуститься.
-
-PUSHOVER_APP_TOKEN — за бажанням, потрібен лише для пуш-сповіщень на телефон через Pushover.
-
-REDIS_URL — за бажанням, за замовчуванням використовується локальний redis://localhost:6379/0.
-
-Запуск бота:
-
-Bash
-python3 main.py
-🇷🇺 Русский (Быстрый старт)
+docker compose up -d --build
+  Русский (Быстрый старт)
 Получение токенов:
 
-Telegram Bot Token: открой @BotFather в Telegram, отправь /newbot, укажи имя и юзернейм (должен заканчиваться на bot) и скопируй полученный токен.
+Telegram Bot Token: открой @BotFather в Telegram, отправь /newbot, укажи имя и юзернейм (должен заканчиваться на bot) и скопируй токен.
 
 Pushover App Token (опционально): зарегистрируйся на pushover.net, в разделе Your Applications нажми Create an Application/API Token и скопируй ключ.
 
-Создание виртуального окружения и установка зависимостей:
+Локальный запуск:
 
 Bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-Настройка файла .env:
-В корневой папке проекта (bot_tg/) скопируй шаблон .env.example в файл .env:
+cp .env.example .env
+# Вставь свои токены в .env
+python3 main.py
+(Если Redis не запущен локально, бот продолжит работу благодаря 30-секундному circuit breaker).
+
+Запуск через Docker Compose (бот + Redis):
 
 Bash
 cp .env.example .env
-Открой файл .env в любом текстовом редакторе и вставь туда свои ключи:
-
-Фрагмент коду
-TELEGRAM_BOT_TOKEN="ваш_токен_от_botfather"
-PUSHOVER_APP_TOKEN="ваш_токен_от_pushover"
-REDIS_URL="redis://localhost:6379/0"
-TELEGRAM_BOT_TOKEN — обязательно, без него бот не запустится.
-
-PUSHOVER_APP_TOKEN — опционально, нужен только для пуш-уведомлений на телефон через Pushover.
-
-REDIS_URL — опционально, по умолчанию используется локальный redis://localhost:6379/0.
-
-Запуск бота:
-
-Bash
-python3 main.py
+docker compose up -d --build
