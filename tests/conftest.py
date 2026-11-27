@@ -1,3 +1,7 @@
+import os
+
+os.environ.setdefault("TELEGRAM_BOT_TOKEN", "123456:TEST_TOKEN")
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
